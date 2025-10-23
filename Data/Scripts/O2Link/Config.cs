@@ -11,6 +11,7 @@ namespace TSUT.O2Link
         public string SYSTEM_VERSION = "1.0.0";
         public bool SYSTEM_AUTO_UPDATE = true;
         public float O2_FROM_H2_RATIO = 0.5f; // Amount of O2 required per unit of H2 consumed
+        public int MAIN_LOOP_INTERVAL = 30; // Main loop interval in ticks
         private static Config _instance;
         private const string CONFIG_FILE = "TSUT_O2Link_Config.xml";
 

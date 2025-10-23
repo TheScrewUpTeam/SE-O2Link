@@ -1,6 +1,6 @@
-using System.Runtime.Remoting.Messaging;
 using Sandbox.Game.EntityComponents;
 using Sandbox.ModAPI;
+using SpaceEngineers.Game.ModAPI;
 
 namespace TSUT.O2Link
 {
@@ -26,6 +26,20 @@ namespace TSUT.O2Link
 
         public float GetCurrentO2Production(float deltaTime)
         {
+            if (Block.IsWorking == false)
+                return 0f;
+            if (Block is IMyAirVent)
+            {
+                var vent = Block as IMyAirVent;
+                if (!vent.Depressurize)
+                    return 0f;
+            }
+            if (Block is IMyOxygenFarm)
+            {
+                var farm = Block as IMyOxygenFarm;
+                if (!farm.CanProduce)
+                    return 0f;
+            }
             var sourceComp = _block.Components.Get<MyResourceSourceComponent>();
             var resourceId = MyResourceDistributorComponent.OxygenId;
             var maxOutput = sourceComp.MaxOutputByType(resourceId);

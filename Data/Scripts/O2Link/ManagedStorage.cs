@@ -1,4 +1,3 @@
-using Sandbox.Game.EntityComponents;
 using Sandbox.ModAPI;
 
 namespace TSUT.O2Link
@@ -8,6 +7,7 @@ namespace TSUT.O2Link
         float GetCurrentO2Storage();
         bool IsWorking { get; }
         IMyTerminalBlock Block { get; }
+        void ConsumeO2(float amount);
     }
 
     public class ManagedStorage : IManagedStorage
@@ -19,13 +19,21 @@ namespace TSUT.O2Link
             _block = block;
         }
 
-        public bool IsWorking => _block.IsWorking && !(_block as IMyGasTank).Stockpile;
+        public bool IsWorking 
+        {
+            get
+            {
+                var tank = _block as IMyGasTank;
+                return _block.IsWorking && tank != null && !tank.Stockpile;
+            }
+        }
 
         public IMyTerminalBlock Block => _block;
 
         public float GetCurrentO2Storage()
         {
-            if (_block is IMyGasTank tank)
+            var tank = _block as IMyGasTank;
+            if (tank != null)
             {
                 var filledRatio = tank.FilledRatio;
                 var capacity = tank.Capacity;
@@ -33,6 +41,24 @@ namespace TSUT.O2Link
                 return (float)currentAmount;
             }
             return 0f;
+        }
+
+        public void ConsumeO2(float amount)
+        {
+            var tank = _block as IMyGasTank;
+            if (tank != null)
+            {
+                var filledRatio = tank.FilledRatio;
+                var capacity = tank.Capacity;
+                var currentAmount = filledRatio * capacity;
+
+                var newAmount = currentAmount - amount;
+                if (newAmount < 0)
+                    newAmount = 0;
+
+                var newFilledRatio = newAmount / capacity;
+                tank.ChangeFilledRatio(newFilledRatio, true);
+            }
         }
     }
 }

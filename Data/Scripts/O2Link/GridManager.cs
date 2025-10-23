@@ -1,145 +1,100 @@
 using Sandbox.ModAPI;
-using System;
 using System.Collections.Generic;
 using VRage.Game.ModAPI;
-using VRage.ModAPI;
 using System.Linq;
-using Sandbox.ModAPI.Interfaces;
-using VRage.Collections;
+using VRage.Game.Components;
+using VRage.Game;
+using VRage.ObjectBuilders;
+using VRage.ModAPI;
+using SpaceEngineers.Game.ModAPI;
 
 namespace TSUT.O2Link
 {
-    public class GridManager
+    [MyEntityComponentDescriptor(typeof(MyObjectBuilder_CubeGrid), false)]
+    public class GridManager : MyGameLogicComponent
     {
-        private readonly IMyCubeGrid _grid;
-        private readonly List<ConveyorManager> conveyorManagers;
-        private readonly Dictionary<IMyTerminalBlock, ConveyorManager> blockToManager;
-        private bool _isValid;
+        private IMyCubeGrid _grid;
+        private readonly List<ConveyorManager> conveyorManagers = new List<ConveyorManager>();
+        private readonly Dictionary<IMyTerminalBlock, ConveyorManager> blockToManager = new Dictionary<IMyTerminalBlock, ConveyorManager>();
+        private bool _isValid = false;
+        private int updateCounter = 0;
+        private int scheduledProcess = 0;
+        private readonly List<IMyTerminalBlock> blocksToProcess = new List<IMyTerminalBlock>();
 
-        public GridManager(IMyCubeGrid grid)
+        public override void Init(MyObjectBuilder_EntityBase objectBuilder)
         {
-            _grid = grid;
-            conveyorManagers = new List<ConveyorManager>();
-            blockToManager = new Dictionary<IMyTerminalBlock, ConveyorManager>();
-            _isValid = true;
-            
-            _grid.OnBlockAdded += OnBlockAdded;
-            _grid.OnBlockRemoved += OnBlockRemoved;
-            
-            Initialize();
+            NeedsUpdate = MyEntityUpdateEnum.EACH_FRAME;
         }
 
-        private void Initialize()
+        public override void Close()
         {
+            base.Close();
+        }
+
+        private void TryInitialize(IMyCubeGrid grid)
+        {
+            MyAPIGateway.Utilities.ShowMessage("O2Link", $"Start processing grid '{grid.DisplayName}'.");
+
+            _grid = grid;
+            _isValid = true;
+
+            _grid.OnBlockAdded += OnBlockAdded;
+            _grid.OnBlockRemoved += OnBlockRemoved;
+
             var terminalSystem = MyAPIGateway.TerminalActionsHelper.GetTerminalSystemForGrid(_grid);
             if (terminalSystem == null)
                 return;
 
+            var generators = new List<IMyTerminalBlock>();
+            var tanks = new List<IMyTerminalBlock>();
+            var thrusters = new List<IMyTerminalBlock>();
+            var engines = new List<IMyTerminalBlock>();
+            var vents = new List<IMyTerminalBlock>();
+            var farms = new List<IMyTerminalBlock>();
+
+            // Get each block type separately
+            terminalSystem.GetBlocksOfType<IMyGasGenerator>(generators);
+            terminalSystem.GetBlocksOfType<IMyAirVent>(vents);
+            terminalSystem.GetBlocksOfType<IMyOxygenFarm>(farms);
+            terminalSystem.GetBlocksOfType<IMyGasTank>(tanks/*, b => b.BlockDefinition.SubtypeName.Contains("Oxygen") || b.BlockDefinition.SubtypeName == ""*/);
+            terminalSystem.GetBlocksOfType<IMyThrust>(thrusters, b => b.BlockDefinition.SubtypeName.Contains("HydrogenThrust"));
+            terminalSystem.GetBlocksOfType<IMyPowerProducer>(engines, b => b.BlockDefinition.SubtypeName.Contains("HydrogenEngine"));
+
+            // Combine all blocks into one list
             var relevantBlocks = new List<IMyTerminalBlock>();
-            
-            // Get only the block types we care about
-            terminalSystem.GetBlocksOfType<IMyGasGenerator>(relevantBlocks, b => b.BlockDefinition.SubtypeName.Contains("OxygenHydrogen"));
-            terminalSystem.GetBlocksOfType<IMyGasTank>(relevantBlocks, b => b.BlockDefinition.SubtypeName.Contains("Oxygen") || 
-                                                                           b.BlockDefinition.SubtypeName.Contains("Hydrogen"));
-            terminalSystem.GetBlocksOfType<IMyThrust>(relevantBlocks, b => b.BlockDefinition.SubtypeName.Contains("Hydrogen"));
-            terminalSystem.GetBlocksOfType<IMyPowerProducer>(relevantBlocks, b => b.BlockDefinition.SubtypeName.Contains("Hydrogen"));
+            relevantBlocks.AddRange(generators);
+            relevantBlocks.AddRange(vents);
+            relevantBlocks.AddRange(farms);
+            relevantBlocks.AddRange(tanks);
+            relevantBlocks.AddRange(thrusters);
+            relevantBlocks.AddRange(engines);
 
             // Create initial conveyor networks
             foreach (var block in relevantBlocks)
             {
-                if (blockToManager.ContainsKey(block))
-                    continue;
-
-                bool added = false;
-                
-                // Try to add to existing networks first
-                foreach (var manager in conveyorManagers)
-                {
-                    if (manager.TryAddBlock(block))
-                    {
-                        blockToManager[block] = manager;
-                        added = true;
-                        break;
-                    }
-                }
-
-                // If not added to any existing network, create a new one
-                if (!added)
-                {
-                    var newManager = new ConveyorManager();
-                    conveyorManagers.Add(newManager);
-                    blockToManager[block] = newManager;
-                    newManager.TryAddBlock(block);
-                }
+                OnBlockAdded(block.SlimBlock);
             }
+
+            MyAPIGateway.Utilities.ShowMessage("O2Link", $"Initialized GridManager for grid '{_grid.DisplayName}' with {conveyorManagers.Count} conveyor networks.");
         }
 
-
-        private List<IMyTerminalBlock> FindConnectedBlocks(IMyTerminalBlock startBlock)
+        public override void UpdateAfterSimulation()
         {
-            var result = new List<IMyTerminalBlock>();
-            var toCheck = new List<IMyTerminalBlock>();
-            var checked_ = new List<IMyTerminalBlock>();
-            
-            toCheck.Add(startBlock);
-            result.Add(startBlock);
-            checked_.Add(startBlock);
-
-            while (toCheck.Count > 0)
+            if (!_isValid)
             {
-                var current = toCheck[0];
-                toCheck.RemoveAt(0);
-                
-                var connected = GetConnectedBlocks(current);
-
-                foreach (var block in connected)
-                {
-                    if (!checked_.Contains(block))
-                    {
-                        result.Add(block);
-                        toCheck.Add(block);
-                        checked_.Add(block);
-                    }
-                }
+                TryInitialize(Entity as IMyCubeGrid);
+                return;
             }
-
-            return result;
-        }
-
-        private List<IMyTerminalBlock> GetConnectedBlocks(IMyTerminalBlock block)
-        {
-            var result = new List<IMyTerminalBlock>();
-            
-            if (!block.HasInventory)
-                return result;
-
-            var inventory = block.GetInventory();
-            var terminalSystem = MyAPIGateway.TerminalActionsHelper.GetTerminalSystemForGrid(_grid);
-            
-            if (terminalSystem == null)
-                return result;
-
-            var candidates = new List<IMyTerminalBlock>();
-            
-            // Get only the block types we care about
-            terminalSystem.GetBlocksOfType<IMyGasGenerator>(candidates);
-            terminalSystem.GetBlocksOfType<IMyGasTank>(candidates, b => b.BlockDefinition.SubtypeName.Contains("Oxygen"));
-            terminalSystem.GetBlocksOfType<IMyThrust>(candidates, b => b.BlockDefinition.SubtypeName.Contains("HydrogenThrust"));
-            terminalSystem.GetBlocksOfType<IMyPowerProducer>(candidates, b => b.BlockDefinition.SubtypeName.Contains("HydrogenEngine"));
-
-            foreach (var otherBlock in candidates)
+            if (scheduledProcess > 0 && updateCounter >= scheduledProcess)
             {
-                if (!otherBlock.HasInventory || otherBlock == block)
-                    continue;
-
-                var otherInventory = otherBlock.GetInventory();
-                if (inventory.IsConnectedTo(otherInventory))
-                {
-                    result.Add(otherBlock);
-                }
+                ProcessScheduledBlocks();
+                blocksToProcess.Clear();
+                scheduledProcess = 0;
             }
-
-            return result;
+            updateCounter++;
+            if (updateCounter % Config.Instance.MAIN_LOOP_INTERVAL != 0) return;
+            var deltaTime = updateCounter * MyEngineConstants.UPDATE_STEP_SIZE_IN_SECONDS;
+            Update(deltaTime);
         }
 
         private void OnBlockAdded(IMySlimBlock block)
@@ -151,49 +106,75 @@ namespace TSUT.O2Link
             if (terminalBlock == null)
                 return;
 
-            // Check if it's one of our relevant block types
-            if (!(terminalBlock is IMyGasGenerator || 
-                  terminalBlock is IMyGasTank ||
-                  terminalBlock is IMyThrust ||
-                  terminalBlock is IMyPowerProducer))
-                return;
+            scheduledProcess = updateCounter + 20;
+            blocksToProcess.Add(terminalBlock);
+        }
 
-            // Try to add to existing networks first
-            List<ConveyorManager> connectedManagers = new List<ConveyorManager>();
-            
-            foreach (var manager in conveyorManagers)
+        private void ProcessScheduledBlocks()
+        {
+            foreach (var terminalBlock in blocksToProcess)
             {
-                if (manager.TryAddBlock(terminalBlock))
+                var isCoveredBlock = terminalBlock is IMyAirVent ||
+                      terminalBlock is IMyOxygenFarm ||
+                      terminalBlock is IMyGasGenerator ||
+                      terminalBlock is IMyGasTank ||
+                      terminalBlock is IMyThrust ||
+                      terminalBlock is IMyPowerProducer;
+
+                MyAPIGateway.Utilities.ShowMessage("O2Link", $"[Grid] Processing added block '{terminalBlock.CustomName}'.");
+
+                // Try to add to existing networks first
+                List<ConveyorManager> connectedManagers = new List<ConveyorManager>();
+
+                foreach (var manager in conveyorManagers)
                 {
-                    connectedManagers.Add(manager);
+                    if (manager.IsConveyorConnected(terminalBlock))
+                    {
+                        connectedManagers.Add(manager);
+                        if (isCoveredBlock)
+                        {
+                            manager.TryAddBlock(terminalBlock);
+                        }
+                    }
+                }
+
+                MyAPIGateway.Utilities.ShowMessage("O2Link", $"[Grid] -> Connected to {connectedManagers.Count} existing networks.");
+
+                if (connectedManagers.Count == 0 && isCoveredBlock)
+                {
+                    MyAPIGateway.Utilities.ShowMessage("O2Link", $"[Grid] -> Created mew network.");
+                    // No existing networks found, create new one
+                    var newManager = new ConveyorManager();
+                    conveyorManagers.Add(newManager);
+                    blockToManager[terminalBlock] = newManager;
+                    newManager.TryAddBlock(terminalBlock);
+                }
+                else if (connectedManagers.Count == 1 && isCoveredBlock)
+                {
+                    MyAPIGateway.Utilities.ShowMessage("O2Link", $"[Grid] -> Added to existing.");
+                    // Add to single existing network
+                    blockToManager[terminalBlock] = connectedManagers[0];
+                }
+                else
+                {
+                    MyAPIGateway.Utilities.ShowMessage("O2Link", $"[Grid] -> Merged networks.");
+                    // Multiple networks found, need to merge them
+                    var targetManager = connectedManagers[0];
+                    if (!isCoveredBlock)
+                    {
+                        blockToManager[terminalBlock] = targetManager;
+                    }
+
+                    // Merge other networks into the target
+                    foreach (var manager in connectedManagers.Skip(1))
+                    {
+                        MergeNetworks(manager, targetManager);
+                        conveyorManagers.Remove(manager);
+                    }
                 }
             }
 
-            if (connectedManagers.Count == 0)
-            {
-                // No existing networks found, create new one
-                var newManager = new ConveyorManager();
-                conveyorManagers.Add(newManager);
-                blockToManager[terminalBlock] = newManager;
-                newManager.TryAddBlock(terminalBlock);
-            }
-            else if (connectedManagers.Count == 1)
-            {
-                // Add to single existing network
-                blockToManager[terminalBlock] = connectedManagers[0];
-            }
-            else
-            {
-                // Multiple networks found, need to merge them
-                var targetManager = connectedManagers[0];
-                blockToManager[terminalBlock] = targetManager;
-
-                // Merge other networks into the target
-                foreach (var manager in connectedManagers.Skip(1))
-                {
-                    MergeNetworks(manager, targetManager);
-                }
-            }
+            MyAPIGateway.Utilities.ShowMessage("O2Link", $"[Grid] -> Conveyors after process: {conveyorManagers.Count}.");
         }
 
         private void OnBlockRemoved(IMySlimBlock block)
@@ -205,18 +186,30 @@ namespace TSUT.O2Link
             if (terminalBlock == null || !blockToManager.ContainsKey(terminalBlock))
                 return;
 
+            MyAPIGateway.Utilities.ShowMessage("O2Link", $"[Grid] Processing removed block '{terminalBlock.CustomName}'.");
+
             var oldManager = blockToManager[terminalBlock];
             blockToManager.Remove(terminalBlock);
             oldManager.RemoveBlock(terminalBlock);
 
             // Check if network needs to be split
             CheckNetworkSplit(oldManager);
+
+            MyAPIGateway.Utilities.ShowMessage("O2Link", $"[Grid] -> Conveyors after process: {conveyorManagers.Count}.");
         }
 
         private void CheckNetworkSplit(ConveyorManager manager)
         {
             var splitResult = manager.CheckNetworkIntegrity();
-            
+
+            MyAPIGateway.Utilities.ShowMessage("O2Link", $"[Grid] -> Check split: {splitResult.IsSplit}.");
+
+            if (splitResult.IsEmpty)
+            {
+                conveyorManagers.Remove(manager);
+                return;
+            }
+
             if (!splitResult.IsSplit)
                 return;
 
@@ -231,6 +224,8 @@ namespace TSUT.O2Link
                 newManager.TryAddBlock(block);
                 manager.RemoveBlock(block);
             }
+
+            MyAPIGateway.Utilities.ShowMessage("O2Link", $"[Grid] -> Conveyors after split: {conveyorManagers.Count}.");
         }
 
         private void MergeNetworks(ConveyorManager source, ConveyorManager target)
@@ -248,7 +243,7 @@ namespace TSUT.O2Link
             source.Invalidate();
         }
 
-        public void Update(float deltaTime = 1f/60f)
+        public void Update(float deltaTime)
         {
             if (!_isValid) return;
 
@@ -264,7 +259,7 @@ namespace TSUT.O2Link
         public void Invalidate()
         {
             if (!_isValid) return;
-            
+
             _isValid = false;
             _grid.OnBlockAdded -= OnBlockAdded;
             _grid.OnBlockRemoved -= OnBlockRemoved;
