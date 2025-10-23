@@ -4,6 +4,7 @@ using SpaceEngineers.Game.ModAPI;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using VRage.Game.ModAPI;
 
 namespace TSUT.O2Link
 {
@@ -13,25 +14,34 @@ namespace TSUT.O2Link
         private readonly List<ManagedStorage> o2Storage = new List<ManagedStorage>();
         private readonly List<ManagedConsumer> consumers = new List<ManagedConsumer>();
         private bool isValid;
-        private IMyTerminalBlock _referenceBlock;
+        private IMyCubeBlock _referenceBlock;
 
         public ConveyorManager()
         {
             isValid = true;
         }
 
-        public bool IsConveyorConnected(IMyTerminalBlock block)
+        private string GetBlockName(IMyCubeBlock block)
+        {
+            var terminalBlock = block as IMyTerminalBlock;
+            return terminalBlock?.Name ?? block.Name;
+        }
+
+        public bool IsConveyorConnected(IMyCubeBlock block)
         {
             if (!isValid) return false;
 
             // Check if the new block is connected to our network (try both directions)
-            bool isConnected = MyVisualScriptLogicProvider.IsConveyorConnected(_referenceBlock.Name, block.Name) ||
-                             MyVisualScriptLogicProvider.IsConveyorConnected(block.Name, _referenceBlock.Name);
+            string refName = GetBlockName(_referenceBlock);
+            string blockName = GetBlockName(block);
+
+            bool isConnected = MyVisualScriptLogicProvider.IsConveyorConnected(refName, blockName) ||
+                             MyVisualScriptLogicProvider.IsConveyorConnected(blockName, refName);
 
             return isConnected;
         }
 
-        public bool TryAddBlock(IMyTerminalBlock block)
+        public bool TryAddBlock(IMyCubeBlock block)
         {
             if (!isValid) return false;
 
@@ -124,25 +134,28 @@ namespace TSUT.O2Link
                           .Sum(p => p.GetCurrentO2Storage());
         }
 
-        public void AddBlock(IMyTerminalBlock block)
+        public void AddBlock(IMyCubeBlock block)
         {
             if (!isValid) return;
 
-            var generator = block as IMyGasGenerator;
+            var terminalBlock = block as IMyTerminalBlock;
+            if (terminalBlock == null) return; // For now, we still need terminal blocks for functionality
+
+            var generator = terminalBlock as IMyGasGenerator;
             if (generator != null)
             {
                 producers.Add(new ManagedProducer(generator));
                 return;
             }
 
-            var vent = block as IMyAirVent;
+            var vent = terminalBlock as IMyAirVent;
             if (vent != null)
             {
                 producers.Add(new ManagedProducer(vent));
                 return;
             }
 
-            var farm = block as IMyOxygenFarm;
+            var farm = terminalBlock as IMyOxygenFarm;
             if (farm != null)
             {
                 producers.Add(new ManagedProducer(farm));
@@ -151,7 +164,7 @@ namespace TSUT.O2Link
 
             try
             {
-                var tank = block as IMyGasTank;
+                var tank = terminalBlock as IMyGasTank;
                 if (tank != null && tank.BlockDefinition.SubtypeName.Contains("Oxygen") || tank.BlockDefinition.SubtypeName == "")
                 {
                     o2Storage.Add(new ManagedStorage(tank));
@@ -160,17 +173,17 @@ namespace TSUT.O2Link
             }
             catch (System.Exception e)
             {
-                MyAPIGateway.Utilities.ShowMessage("O2Link", $"Errror adding gas tank: {e.Message}");
+                MyAPIGateway.Utilities.ShowMessage("O2Link", $"Error adding gas tank: {e.Message}");
             }
 
-            var thruster = block as IMyThrust;
+            var thruster = terminalBlock as IMyThrust;
             if (thruster != null && thruster.BlockDefinition.SubtypeName.Contains("HydrogenThrust"))
             {
                 consumers.Add(new ManagedConsumer(thruster));
                 return;
             }
 
-            var engine = block as IMyPowerProducer;
+            var engine = terminalBlock as IMyPowerProducer;
             if (engine != null && engine.BlockDefinition.SubtypeName.Contains("HydrogenEngine"))
             {
                 consumers.Add(new ManagedConsumer(engine));
@@ -178,38 +191,41 @@ namespace TSUT.O2Link
             }
         }
 
-        public void RemoveBlock(IMyTerminalBlock block)
+        public void RemoveBlock(IMyCubeBlock block)
         {
             if (!isValid) return;
 
-            if (block is IMyGasGenerator)
+            var terminalBlock = block as IMyTerminalBlock;
+            if (terminalBlock == null) return; // For now, we still need terminal blocks for functionality
+
+            if (terminalBlock is IMyGasGenerator)
             {
-                producers.RemoveAll(p => p.Block == block);
+                producers.RemoveAll(p => p.Block == terminalBlock);
                 return;
             }
 
-            if (block is IMyAirVent)
+            if (terminalBlock is IMyAirVent)
             {
-                producers.RemoveAll(p => p.Block == block);
+                producers.RemoveAll(p => p.Block == terminalBlock);
                 return;
             }
 
-            if (block is IMyOxygenFarm)
+            if (terminalBlock is IMyOxygenFarm)
             {
-                producers.RemoveAll(p => p.Block == block);
+                producers.RemoveAll(p => p.Block == terminalBlock);
                 return;
             }
 
-            var tank = block as IMyGasTank;
+            var tank = terminalBlock as IMyGasTank;
             if (tank != null && tank.BlockDefinition.SubtypeName.Contains("Oxygen"))
             {
-                o2Storage.RemoveAll(t => t.Block == block);
+                o2Storage.RemoveAll(t => t.Block == terminalBlock);
                 return;
             }
 
-            if (block is IMyThrust || block is IMyPowerProducer)
+            if (terminalBlock is IMyThrust || terminalBlock is IMyPowerProducer)
             {
-                consumers.RemoveAll(c => c.Block == block);
+                consumers.RemoveAll(c => c.Block == terminalBlock);
                 return;
             }
 
@@ -231,13 +247,13 @@ namespace TSUT.O2Link
         {
             public bool IsEmpty { get; set; }
             public bool IsSplit { get; set; }
-            public List<IMyTerminalBlock> DisconnectedBlocks { get; set; }
+            public List<IMyCubeBlock> DisconnectedBlocks { get; set; }
 
             public NetworkSplitResult()
             {
                 IsEmpty = false;
                 IsSplit = false;
-                DisconnectedBlocks = new List<IMyTerminalBlock>();
+                DisconnectedBlocks = new List<IMyCubeBlock>();
             }
         }
 
@@ -269,16 +285,15 @@ namespace TSUT.O2Link
                 {
                     result.IsSplit = true;
                     result.DisconnectedBlocks.Add(block);
-                    MyAPIGateway.Utilities.ShowMessage("O2Link", $"Network split detected: '{block.CustomName}' is disconnected from '{_referenceBlock.CustomName}'");
                 }
             }
 
             return result;
         }
 
-        private List<IMyTerminalBlock> GetAllBlocks()
+        private List<IMyCubeBlock> GetAllBlocks()
         {
-            var blocks = new List<IMyTerminalBlock>();
+            var blocks = new List<IMyCubeBlock>();
             blocks.AddRange(producers.Select(p => p.Block));
             blocks.AddRange(o2Storage.Select(s => s.Block));
             blocks.AddRange(consumers.Select(c => c.Block));
