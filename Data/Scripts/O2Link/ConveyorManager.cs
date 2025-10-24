@@ -70,6 +70,8 @@ namespace TSUT.O2Link
 
             float o2FromStorageConsumed = 0f;
 
+            // MyAPIGateway.Utilities.ShowMessage("O2Link", $"O2 Production: {o2Production:F2} L, O2 from Storage: {o2FromStorage:F2} L");
+
             foreach (var consumer in consumers)
             {
                 if (!consumer.IsWorking)
@@ -78,6 +80,7 @@ namespace TSUT.O2Link
                 float o2Needed = consumer.GetCurrentO2Consumption(deltaTime);
                 consumer.UpdateInfo();
 
+                // MyAPIGateway.Utilities.ShowMessage("O2Link", $"Processing: {consumer.Block.DisplayNameText}, O2 Needed: {o2Needed:F2} L");
 
                 if (o2Production >= o2Needed)
                 {
@@ -99,8 +102,10 @@ namespace TSUT.O2Link
                 if (o2Needed > 0)
                 {
                     consumer.Disable();
+                    // MyAPIGateway.Utilities.ShowMessage("O2Link", $" -> Disabled;");
                     continue;
                 }
+                // MyAPIGateway.Utilities.ShowMessage("O2Link", $" -> Enabled;");
 
                 consumer.Enable();
             }

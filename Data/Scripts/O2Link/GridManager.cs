@@ -19,6 +19,7 @@ namespace TSUT.O2Link
         private bool _isInitialized = false;
         private int updateCounter = 0;
         private int scheduledProcess = 0;
+        private int lastUpdate = 0;
         private readonly List<IMyCubeBlock> blocksToProcess = new List<IMyCubeBlock>();
 
         public ManagedProducer GetOrCreateProducer(IMyTerminalBlock block)
@@ -152,8 +153,9 @@ namespace TSUT.O2Link
             }
             updateCounter++;
             if (updateCounter % Config.Instance.MAIN_LOOP_INTERVAL != 0) return;
-            var deltaTime = updateCounter * MyEngineConstants.UPDATE_STEP_SIZE_IN_SECONDS;
+            var deltaTime = (updateCounter - lastUpdate) * MyEngineConstants.UPDATE_STEP_SIZE_IN_SECONDS;
             Update(deltaTime);
+            lastUpdate = updateCounter;
         }
 
         private void OnBlockAdded(IMySlimBlock block)
