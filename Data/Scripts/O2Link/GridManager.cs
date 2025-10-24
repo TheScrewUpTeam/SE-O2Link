@@ -14,12 +14,74 @@ namespace TSUT.O2Link
     public class GridManager : MyGameLogicComponent
     {
         private IMyCubeGrid _grid;
-        private readonly List<ConveyorManager> conveyorManagers = new List<ConveyorManager>();
         private readonly Dictionary<IMyCubeBlock, ConveyorManager> blockToManager = new Dictionary<IMyCubeBlock, ConveyorManager>();
+        private readonly Dictionary<IMyCubeBlock, IManagedBlock> managedBlocks = new Dictionary<IMyCubeBlock, IManagedBlock>();
         private bool _isInitialized = false;
         private int updateCounter = 0;
         private int scheduledProcess = 0;
         private readonly List<IMyCubeBlock> blocksToProcess = new List<IMyCubeBlock>();
+
+        public ManagedProducer GetOrCreateProducer(IMyTerminalBlock block)
+        {
+            IManagedBlock existing;
+            if (managedBlocks.TryGetValue(block, out existing))
+            {
+                return existing as ManagedProducer;
+            }
+
+            var producer = new ManagedProducer(block);
+            managedBlocks[block] = producer;
+            return producer;
+        }
+
+        public ManagedStorage GetOrCreateStorage(IMyGasTank block)
+        {
+            IManagedBlock existing;
+            if (managedBlocks.TryGetValue(block, out existing))
+            {
+                return existing as ManagedStorage;
+            }
+
+            var storage = new ManagedStorage(block);
+            managedBlocks[block] = storage;
+            return storage;
+        }
+
+        public ManagedConsumer GetOrCreateConsumer(IMyTerminalBlock block)
+        {
+            IManagedBlock existing;
+            if (managedBlocks.TryGetValue(block, out existing))
+            {
+                return existing as ManagedConsumer;
+            }
+
+            var consumer = new ManagedConsumer(block);
+            managedBlocks[block] = consumer;
+            return consumer;
+        }
+
+        public ManagedCustom GetOrCreateCustom(IMyCubeBlock block)
+        {
+            IManagedBlock existing;
+            if (managedBlocks.TryGetValue(block, out existing))
+            {
+                return existing as ManagedCustom;
+            }
+
+            var custom = new ManagedCustom(block);
+            managedBlocks[block] = custom;
+            return custom;
+        }
+
+        public void ReleaseManagedBlock(IMyCubeBlock block)
+        {
+            IManagedBlock managed;
+            if (managedBlocks.TryGetValue(block, out managed))
+            {
+                managed.Dismiss();
+                managedBlocks.Remove(block);
+            }
+        }
 
         public override void Init(MyObjectBuilder_EntityBase objectBuilder)
         {
@@ -34,7 +96,6 @@ namespace TSUT.O2Link
         private void Initialize(IMyCubeGrid grid)
         {
             _grid = grid;
-            _isInitialized = true;
 
             _grid.OnBlockAdded += OnBlockAdded;
             _grid.OnBlockRemoved += OnBlockRemoved;
@@ -72,6 +133,8 @@ namespace TSUT.O2Link
             {
                 OnBlockAdded(block.SlimBlock);
             }
+            
+            _isInitialized = true;
         }
 
         public override void UpdateAfterSimulation()
@@ -93,23 +156,13 @@ namespace TSUT.O2Link
             Update(deltaTime);
         }
 
-        private bool IsRelevantTerminalBlock(IMyTerminalBlock block)
-        {
-            return block is IMyAirVent ||
-                   block is IMyOxygenFarm ||
-                   block is IMyGasGenerator ||
-                   block is IMyGasTank ||
-                   block is IMyThrust ||
-                   block is IMyPowerProducer;
-        }
-
         private void OnBlockAdded(IMySlimBlock block)
         {
             if (block?.FatBlock == null)
                 return;
 
             var cubeBlock = block.FatBlock;
-
+            // Processing should be postponed to let the conveyors initialize
             scheduledProcess = updateCounter + 20;
             blocksToProcess.Add(cubeBlock);
         }
@@ -121,65 +174,51 @@ namespace TSUT.O2Link
             {
                 if (blockToManager.ContainsKey(cubeBlock))
                     continue;
-                var terminalBlock = cubeBlock as IMyTerminalBlock;
-                bool isCoveredBlock = terminalBlock != null && IsRelevantTerminalBlock(terminalBlock);
-
-                string blockName = terminalBlock?.CustomName ?? cubeBlock.DisplayNameText;
 
                 // Try to add to existing networks first
                 List<ConveyorManager> connectedManagers = new List<ConveyorManager>();
 
-                foreach (var manager in conveyorManagers)
+                foreach (var manager in blockToManager.Values.Distinct())
                 {
                     if (manager.IsConveyorConnected(cubeBlock))
                     {
                         connectedManagers.Add(manager);
-                        if (isCoveredBlock && terminalBlock != null)
-                        {
-                            manager.TryAddBlock(terminalBlock);
-                        }
                     }
                 }
 
+                // MyAPIGateway.Utilities.ShowMessage("O2Link", $"Adding block: {cubeBlock.DisplayNameText}, Belongs to {connectedManagers.Count} networks");
+
                 if (connectedManagers.Count == 0)
                 {
-                    if (isCoveredBlock && terminalBlock != null)
-                    {
-                        // No existing networks found, create new one
-                        var newManager = new ConveyorManager();
-                        conveyorManagers.Add(newManager);
-                        blockToManager[cubeBlock] = newManager;
-                        newManager.TryAddBlock(terminalBlock);
-                    }
+                    // No existing networks found, create new one
+                    var newManager = new ConveyorManager(this);
+                    newManager.TryAddBlock(cubeBlock);
+                    blockToManager[cubeBlock] = newManager;
+                    // MyAPIGateway.Utilities.ShowMessage("O2Link", $" -> New network created, Networks Total: {blockToManager.Values.Distinct().Count()}");
                 }
                 else if (connectedManagers.Count == 1)
                 {
                     // Add to single existing network
+                    connectedManagers[0].TryAddBlock(cubeBlock);
                     blockToManager[cubeBlock] = connectedManagers[0];
-                    if (isCoveredBlock && terminalBlock != null)
-                    {
-                        connectedManagers[0].TryAddBlock(terminalBlock);
-                    }
+                    // MyAPIGateway.Utilities.ShowMessage("O2Link", $" -> Added to existing network, Networks Total: {blockToManager.Values.Distinct().Count()}");
                 }
                 else
                 {
                     // Multiple networks found, need to merge them
                     var targetManager = connectedManagers[0];
+                    targetManager.TryAddBlock(cubeBlock);
                     blockToManager[cubeBlock] = targetManager;
-                    if (isCoveredBlock && terminalBlock != null)
-                    {
-                        targetManager.TryAddBlock(terminalBlock);
-                    }
 
                     // Merge other networks into the target
                     foreach (var manager in connectedManagers.Skip(1))
                     {
                         MergeNetworks(manager, targetManager);
-                        conveyorManagers.Remove(manager);
                     }
+                    // MyAPIGateway.Utilities.ShowMessage("O2Link", $" -> merged {connectedManagers.Count} networks, Networks Total: {blockToManager.Values.Distinct().Count()}");
                 }
             }
-            MyAPIGateway.Utilities.ShowMessage("O2Link", $"Blocks added: {blocksToProcess.Count}, Conveyor Networks: {conveyorManagers.Count}");
+            // MyAPIGateway.Utilities.ShowMessage("O2Link", $"Blocks added: {blocksToProcess.Count}, Conveyor Networks: {blockToManager.Values.Distinct().Count()}");
         }
 
         private void OnBlockRemoved(IMySlimBlock block)
@@ -203,29 +242,26 @@ namespace TSUT.O2Link
 
             // Check if network needs to be split
             CheckNetworkSplit(oldManager);
-            MyAPIGateway.Utilities.ShowMessage("O2Link", $"Block removed: {terminalBlock?.CustomName ?? cubeBlock.DisplayNameText}, Conveyor Networks: {conveyorManagers.Count}");
+            // MyAPIGateway.Utilities.ShowMessage("O2Link", $"Block removed: {terminalBlock?.CustomName ?? cubeBlock.DisplayNameText}, Conveyor Networks: {blockToManager.Values.Distinct().Count()}");
+            ReleaseManagedBlock(cubeBlock);
         }
 
         private void CheckNetworkSplit(ConveyorManager manager)
         {
             var splitResult = manager.CheckNetworkIntegrity();
 
-            if (splitResult.IsEmpty)
-            {
-                conveyorManagers.Remove(manager);
-                return;
-            }
-
             if (!splitResult.IsSplit)
                 return;
 
             // Create a new network for disconnected blocks
-            var newManager = new ConveyorManager();
-            conveyorManagers.Add(newManager);
+            var newManager = new ConveyorManager(this);
+
+            // MyAPIGateway.Utilities.ShowMessage("O2Link", $"Split found. {splitResult.DisconnectedBlocks.Count} blocks disconnected.");
 
             // Move disconnected blocks to the new network
             foreach (var block in splitResult.DisconnectedBlocks)
             {
+                // MyAPIGateway.Utilities.ShowMessage("O2Link", $" -> Moving block: {block.DisplayNameText} to new network.");
                 blockToManager[block] = newManager;
                 newManager.TryAddBlock(block);
                 manager.RemoveBlock(block);
@@ -239,6 +275,8 @@ namespace TSUT.O2Link
             {
                 if (kvp.Value == source)
                 {
+                    source.RemoveBlock(kvp.Key as IMyTerminalBlock);
+                    target.TryAddBlock(kvp.Key as IMyTerminalBlock);
                     blockToManager[kvp.Key] = target;
                 }
             }
@@ -251,7 +289,7 @@ namespace TSUT.O2Link
         {
             if (!_isInitialized) return;
 
-            foreach (var manager in conveyorManagers)
+            foreach (var manager in blockToManager.Values.Distinct())
             {
                 if (manager.IsValid)
                 {
@@ -267,11 +305,10 @@ namespace TSUT.O2Link
             _grid.OnBlockAdded -= OnBlockAdded;
             _grid.OnBlockRemoved -= OnBlockRemoved;
 
-            foreach (var manager in conveyorManagers)
+            foreach (var manager in blockToManager.Values)
             {
                 manager.Invalidate();
             }
-            conveyorManagers.Clear();
             blockToManager.Clear();
         }
 

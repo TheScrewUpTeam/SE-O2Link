@@ -2,10 +2,9 @@ using Sandbox.ModAPI;
 
 namespace TSUT.O2Link
 {
-    public interface IManagedStorage
+    public interface IManagedStorage: IManagedBlock
     {
         float GetCurrentO2Storage();
-        bool IsWorking { get; }
         IMyTerminalBlock Block { get; }
         void ConsumeO2(float amount);
     }
@@ -59,6 +58,21 @@ namespace TSUT.O2Link
                 var newFilledRatio = newAmount / capacity;
                 tank.ChangeFilledRatio(newFilledRatio, true);
             }
+        }
+
+        public void Enable()
+        {
+            (_block as IMyFunctionalBlock).Enabled = true;
+        }
+
+        public void Disable()
+        {
+            (_block as IMyFunctionalBlock).Enabled = false;
+        }
+
+        public void Dismiss()
+        {
+            // Nothing to clean up
         }
     }
 }

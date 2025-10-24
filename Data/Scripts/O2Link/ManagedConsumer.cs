@@ -32,14 +32,18 @@ namespace TSUT.O2Link
                 _playerWantsOn = Storage.LoadBlockState(_block as IMyFunctionalBlock);
             }
             _block.AppendingCustomInfo += AppendCustomInfo;
-            MyAPIGateway.Utilities.ShowMessage("O2Link", $"Created ManagedConsumer for {_block.CustomName}");
         }
 
         private void AppendCustomInfo(IMyTerminalBlock block, StringBuilder builder)
         {
-            if (!_isValid)
+            if (!_isValid || _block == null)
                 return;
-            var isOn = (_block as IMyFunctionalBlock).Enabled;
+
+            var functionalBlock = _block as IMyFunctionalBlock;
+            if (functionalBlock == null)
+                return;
+
+            var isOn = functionalBlock.Enabled;
             builder.AppendLine("--- O2Link ---");
             if (_playerWantsOn)
             {
@@ -53,12 +57,19 @@ namespace TSUT.O2Link
 
         private void Block_EnabledChanged(IMyTerminalBlock block)
         {
+            if (!_isValid || _block == null)
+                return;
+
             if (_nextCallINternal)
             {
                 _nextCallINternal = false;
                 return;
             }
-            _playerWantsOn = (block as IMyFunctionalBlock).Enabled;
+            var functionalBlock = block as IMyFunctionalBlock;
+            if (functionalBlock != null)
+            {
+                _playerWantsOn = functionalBlock.Enabled;
+            }
             Storage.SaveBlockState(block as IMyFunctionalBlock, _playerWantsOn);
         }
 
@@ -107,6 +118,9 @@ namespace TSUT.O2Link
         public void Dismiss()
         {
             _isValid = false;
+            if (_block == null) {
+                return;
+            }
             _block.RefreshCustomInfo();
             _block.AppendingCustomInfo -= AppendCustomInfo;
             MyAPIGateway.TerminalControls.CustomControlGetter -= OnCustomControlGetter;
@@ -176,6 +190,8 @@ namespace TSUT.O2Link
 
         public void UpdateInfo()
         {
+            if (!_isValid || _block == null)
+                return;
             _block.RefreshCustomInfo();
             _block.SetDetailedInfoDirty();
         }

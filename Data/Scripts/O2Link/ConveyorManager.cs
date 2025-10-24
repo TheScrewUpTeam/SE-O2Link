@@ -14,18 +14,20 @@ namespace TSUT.O2Link
         private readonly List<ManagedProducer> producers = new List<ManagedProducer>();
         private readonly List<ManagedStorage> o2Storage = new List<ManagedStorage>();
         private readonly List<ManagedConsumer> consumers = new List<ManagedConsumer>();
+        private readonly List<ManagedCustom> customBlocks = new List<ManagedCustom>();
         private bool isValid;
         private IMyCubeBlock _referenceBlock;
+        private readonly GridManager _gridManager;
 
-        public ConveyorManager()
+        public ConveyorManager(GridManager gridManager)
         {
+            _gridManager = gridManager;
             isValid = true;
         }
 
         private string GetBlockName(IMyCubeBlock block)
         {
-            var terminalBlock = block as IMyTerminalBlock;
-            return terminalBlock?.Name ?? block.Name;
+            return block.Name;
         }
 
         public bool IsConveyorConnected(IMyCubeBlock block)
@@ -125,13 +127,13 @@ namespace TSUT.O2Link
 
         private float CalculateO2Production(float deltaTime)
         {
-            return producers.Where(p => p.IsWorking)
+            return producers.Where(p => p != null && p.IsWorking)
                           .Sum(p => p.GetCurrentO2Production(deltaTime));
         }
 
         private float CalculateO2Storage()
         {
-            return o2Storage.Where(p => p.IsWorking)
+            return o2Storage.Where(p => p != null && p.IsWorking)
                           .Sum(p => p.GetCurrentO2Storage());
         }
 
@@ -145,40 +147,69 @@ namespace TSUT.O2Link
             var generator = terminalBlock as IMyGasGenerator;
             if (generator != null)
             {
-                producers.Add(new ManagedProducer(generator));
+                var producer = _gridManager.GetOrCreateProducer(generator);
+                if (!producers.Contains(producer)){
+                    producers.Add(producer);
+                }
+                return;
             }
 
             var vent = terminalBlock as IMyAirVent;
             if (vent != null)
             {
-                producers.Add(new ManagedProducer(vent));
+                var producer = _gridManager.GetOrCreateProducer(vent);
+                if (!producers.Contains(producer)){
+                    producers.Add(producer);
+                }
+                return;
             }
 
             var farm = terminalBlock as IMyOxygenFarm;
             if (farm != null)
             {
-                producers.Add(new ManagedProducer(farm));
+                var producer = _gridManager.GetOrCreateProducer(farm);
+                if (!producers.Contains(producer)){
+                    producers.Add(producer);
+                }
+                return;
             }
 
             var tank = terminalBlock as IMyGasTank;
             if (tank != null && (tank.BlockDefinition.SubtypeName.Contains("Oxygen") || tank.BlockDefinition.SubtypeName == ""))
             {
-                o2Storage.Add(new ManagedStorage(tank));
+                var storage = _gridManager.GetOrCreateStorage(tank);
+                if (!o2Storage.Contains(storage)){
+                    o2Storage.Add(storage);
+                }
+                return;
             }
 
             var thruster = terminalBlock as IMyThrust;
             if (thruster != null && thruster.BlockDefinition.SubtypeName.Contains("HydrogenThrust"))
             {
-                consumers.Add(new ManagedConsumer(thruster));
+                var consumer = _gridManager.GetOrCreateConsumer(thruster);
+                if (!consumers.Contains(consumer)){
+                    consumers.Add(consumer);
+                }
+                return;
             }
 
             var engine = terminalBlock as IMyPowerProducer;
             if (engine != null && engine.BlockDefinition.SubtypeName.Contains("HydrogenEngine"))
             {
-                consumers.Add(new ManagedConsumer(engine));
+                var consumer = _gridManager.GetOrCreateConsumer(engine);
+                if (!consumers.Contains(consumer))
+                {
+                    consumers.Add(consumer);
+                }
+                return;
             }
-            
-            MyAPIGateway.Utilities.ShowMessage("O2Link", $"Block added: {terminalBlock?.CustomName ?? block.DisplayNameText}, Consumers: {consumers.Count}");
+
+            var custom = _gridManager.GetOrCreateCustom(terminalBlock);
+            if (!customBlocks.Contains(custom))
+            {
+                customBlocks.Add(custom);
+            }
         }
 
         public void RemoveBlock(IMyCubeBlock block)
@@ -218,9 +249,26 @@ namespace TSUT.O2Link
                 var consumersToRemove = consumers.Where(c => c.Block == terminalBlock).ToList();
                 foreach (var consumer in consumersToRemove)
                 {
-                    consumer.Dismiss();
+                    if (consumer != null)
+                    {
+                        consumer.Dismiss();
+                    }
                 }
                 consumers.RemoveAll(c => c.Block == terminalBlock);
+                return;
+            }
+            
+            if (terminalBlock is IManagedCustom)
+            {
+                var customsToRemove = customBlocks.Where(c => c.Block == terminalBlock).ToList();
+                foreach (var custom in customsToRemove)
+                {
+                    if (custom != null)
+                    {
+                        custom.Dismiss();
+                    }
+                }
+                customBlocks.RemoveAll(c => c.Block == terminalBlock);
                 return;
             }
 
@@ -229,14 +277,15 @@ namespace TSUT.O2Link
             {
                 _referenceBlock = GetAnyRemainingBlock();
             }
-            MyAPIGateway.Utilities.ShowMessage("O2Link", $"Block removed: {terminalBlock?.CustomName ?? block.DisplayNameText}, Consumers: {consumers.Count}");
+            // MyAPIGateway.Utilities.ShowMessage("O2Link", $"Block removed: {terminalBlock?.CustomName ?? block.DisplayNameText}, Consumers: {consumers.Count}");
         }
 
-        private IMyTerminalBlock GetAnyRemainingBlock()
+        private IMyCubeBlock GetAnyRemainingBlock()
         {
             return producers.FirstOrDefault()?.Block ??
                    o2Storage.FirstOrDefault()?.Block ??
-                   consumers.FirstOrDefault()?.Block;
+                   consumers.FirstOrDefault()?.Block ??
+                   customBlocks.FirstOrDefault()?.Block;
         }
 
         public class NetworkSplitResult
@@ -290,9 +339,22 @@ namespace TSUT.O2Link
         private List<IMyCubeBlock> GetAllBlocks()
         {
             var blocks = new List<IMyCubeBlock>();
-            blocks.AddRange(producers.Select(p => p.Block));
-            blocks.AddRange(o2Storage.Select(s => s.Block));
-            blocks.AddRange(consumers.Select(c => c.Block));
+            lock (producers)
+            {
+                blocks.AddRange(producers.Where(b => b != null).Select(p => p.Block));
+            }
+            lock (o2Storage)
+            {
+                blocks.AddRange(o2Storage.Where(b => b != null).Select(s => s.Block));
+            }
+            lock (consumers)
+            {
+                blocks.AddRange(consumers.Where(b => b != null).Select(c => c.Block));
+            }
+            lock (customBlocks)
+            {
+                blocks.AddRange(customBlocks.Where(b => b != null).Select(c => c.Block));
+            }
             return blocks;
         }
 
@@ -302,6 +364,7 @@ namespace TSUT.O2Link
             producers.Clear();
             o2Storage.Clear();
             consumers.Clear();
+            customBlocks.Clear();
         }
 
         public bool IsValid => isValid;

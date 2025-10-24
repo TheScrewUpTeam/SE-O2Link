@@ -4,10 +4,9 @@ using SpaceEngineers.Game.ModAPI;
 
 namespace TSUT.O2Link
 {
-    public interface IManagedProducer
+    public interface IManagedProducer: IManagedBlock
     {
         float GetCurrentO2Production(float deltaTime);
-        bool IsWorking { get; }
         IMyTerminalBlock Block { get; }
     }
     
@@ -23,6 +22,21 @@ namespace TSUT.O2Link
         public bool IsWorking => _block.IsWorking;
 
         public IMyTerminalBlock Block => _block;
+
+        public void Disable()
+        {
+            (_block as IMyFunctionalBlock).Enabled = false;
+        }
+
+        public void Dismiss()
+        {
+            // Nothing to clean up
+        }
+
+        public void Enable()
+        {
+            (_block as IMyFunctionalBlock).Enabled = true;
+        }
 
         public float GetCurrentO2Production(float deltaTime)
         {
