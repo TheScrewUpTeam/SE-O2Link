@@ -1,12 +1,8 @@
-using VRage.Game.ObjectBuilders.Definitions;
 using Sandbox.ModAPI;
 using Sandbox.Definitions;
-using Sandbox.Game.EntityComponents;
-using VRage.Game;
 using System.Collections.Generic;
 using Sandbox.ModAPI.Interfaces.Terminal;
 using System.Text;
-using System;
 
 namespace TSUT.O2Link
 {
@@ -19,11 +15,12 @@ namespace TSUT.O2Link
 
     public class ManagedConsumer : IManagedBlock, IManagedConsumer
     {
-        protected readonly IMyTerminalBlock _block;
+        protected IMyTerminalBlock _block;
         bool _switchSubscribed = false;
         bool _nextCallINternal = false;
         float _cachedO2Consumption = 0f;
         bool _playerWantsOn;
+        bool _isValid = true;
 
         public ManagedConsumer(IMyTerminalBlock block)
         {
@@ -32,13 +29,16 @@ namespace TSUT.O2Link
             if (_block is IMyFunctionalBlock)
             {
                 (_block as IMyFunctionalBlock).EnabledChanged += Block_EnabledChanged;
-                _playerWantsOn = (_block as IMyFunctionalBlock).Enabled;
+                _playerWantsOn = Storage.LoadBlockState(_block as IMyFunctionalBlock);
             }
             _block.AppendingCustomInfo += AppendCustomInfo;
+            MyAPIGateway.Utilities.ShowMessage("O2Link", $"Created ManagedConsumer for {_block.CustomName}");
         }
 
         private void AppendCustomInfo(IMyTerminalBlock block, StringBuilder builder)
         {
+            if (!_isValid)
+                return;
             var isOn = (_block as IMyFunctionalBlock).Enabled;
             builder.AppendLine("--- O2Link ---");
             if (_playerWantsOn)
@@ -59,6 +59,7 @@ namespace TSUT.O2Link
                 return;
             }
             _playerWantsOn = (block as IMyFunctionalBlock).Enabled;
+            Storage.SaveBlockState(block as IMyFunctionalBlock, _playerWantsOn);
         }
 
         private void OnCustomControlGetter(IMyTerminalBlock topBlock, List<IMyTerminalControl> controls)
@@ -105,10 +106,16 @@ namespace TSUT.O2Link
 
         public void Dismiss()
         {
+            _isValid = false;
+            _block.RefreshCustomInfo();
+            _block.AppendingCustomInfo -= AppendCustomInfo;
             MyAPIGateway.TerminalControls.CustomControlGetter -= OnCustomControlGetter;
             if (_block is IMyFunctionalBlock){
                 (_block as IMyFunctionalBlock).EnabledChanged -= Block_EnabledChanged;
             }
+            _block.ClearDetailedInfo();
+            _block.SetDetailedInfoDirty();
+            _block = null;
         }
 
         public void Enable()

@@ -7,6 +7,7 @@ namespace TSUT.O2Link
     public class Config
     {
         public static string Version = "1.0.0";
+        public static Guid EnabledStorageGuid = new Guid("decafbad-0000-4c00-babe-c0ffee000003");
 
         public string SYSTEM_VERSION = "1.0.0";
         public bool SYSTEM_AUTO_UPDATE = true;

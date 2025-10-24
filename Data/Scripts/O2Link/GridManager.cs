@@ -16,7 +16,7 @@ namespace TSUT.O2Link
         private IMyCubeGrid _grid;
         private readonly List<ConveyorManager> conveyorManagers = new List<ConveyorManager>();
         private readonly Dictionary<IMyCubeBlock, ConveyorManager> blockToManager = new Dictionary<IMyCubeBlock, ConveyorManager>();
-        private bool _isValid = false;
+        private bool _isInitialized = false;
         private int updateCounter = 0;
         private int scheduledProcess = 0;
         private readonly List<IMyCubeBlock> blocksToProcess = new List<IMyCubeBlock>();
@@ -31,10 +31,10 @@ namespace TSUT.O2Link
             base.Close();
         }
 
-        private void TryInitialize(IMyCubeGrid grid)
+        private void Initialize(IMyCubeGrid grid)
         {
             _grid = grid;
-            _isValid = true;
+            _isInitialized = true;
 
             _grid.OnBlockAdded += OnBlockAdded;
             _grid.OnBlockRemoved += OnBlockRemoved;
@@ -76,9 +76,9 @@ namespace TSUT.O2Link
 
         public override void UpdateAfterSimulation()
         {
-            if (!_isValid)
+            if (!_isInitialized)
             {
-                TryInitialize(Entity as IMyCubeGrid);
+                Initialize(Entity as IMyCubeGrid);
                 return;
             }
             if (scheduledProcess > 0 && updateCounter >= scheduledProcess)
@@ -105,7 +105,7 @@ namespace TSUT.O2Link
 
         private void OnBlockAdded(IMySlimBlock block)
         {
-            if (!_isValid || block?.FatBlock == null)
+            if (block?.FatBlock == null)
                 return;
 
             var cubeBlock = block.FatBlock;
@@ -116,8 +116,11 @@ namespace TSUT.O2Link
 
         private void ProcessScheduledBlocks()
         {
+            if (!_isInitialized) return;
             foreach (var cubeBlock in blocksToProcess)
             {
+                if (blockToManager.ContainsKey(cubeBlock))
+                    continue;
                 var terminalBlock = cubeBlock as IMyTerminalBlock;
                 bool isCoveredBlock = terminalBlock != null && IsRelevantTerminalBlock(terminalBlock);
 
@@ -176,11 +179,12 @@ namespace TSUT.O2Link
                     }
                 }
             }
+            MyAPIGateway.Utilities.ShowMessage("O2Link", $"Blocks added: {blocksToProcess.Count}, Conveyor Networks: {conveyorManagers.Count}");
         }
 
         private void OnBlockRemoved(IMySlimBlock block)
         {
-            if (!_isValid || block?.FatBlock == null)
+            if (!_isInitialized || block?.FatBlock == null)
                 return;
 
             var cubeBlock = block.FatBlock;
@@ -199,6 +203,7 @@ namespace TSUT.O2Link
 
             // Check if network needs to be split
             CheckNetworkSplit(oldManager);
+            MyAPIGateway.Utilities.ShowMessage("O2Link", $"Block removed: {terminalBlock?.CustomName ?? cubeBlock.DisplayNameText}, Conveyor Networks: {conveyorManagers.Count}");
         }
 
         private void CheckNetworkSplit(ConveyorManager manager)
@@ -244,7 +249,7 @@ namespace TSUT.O2Link
 
         public void Update(float deltaTime)
         {
-            if (!_isValid) return;
+            if (!_isInitialized) return;
 
             foreach (var manager in conveyorManagers)
             {
@@ -257,9 +262,8 @@ namespace TSUT.O2Link
 
         public void Invalidate()
         {
-            if (!_isValid) return;
+            if (!_isInitialized) return;
 
-            _isValid = false;
             _grid.OnBlockAdded -= OnBlockAdded;
             _grid.OnBlockRemoved -= OnBlockRemoved;
 
@@ -271,7 +275,7 @@ namespace TSUT.O2Link
             blockToManager.Clear();
         }
 
-        public bool IsValid => _isValid;
+        public bool IsValid => _isInitialized;
         public IMyCubeGrid Grid => _grid;
     }
 }

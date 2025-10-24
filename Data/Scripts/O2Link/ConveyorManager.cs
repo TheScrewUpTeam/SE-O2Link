@@ -5,6 +5,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using VRage.Game.ModAPI;
+using VRage.ObjectBuilders;
 
 namespace TSUT.O2Link
 {
@@ -145,50 +146,39 @@ namespace TSUT.O2Link
             if (generator != null)
             {
                 producers.Add(new ManagedProducer(generator));
-                return;
             }
 
             var vent = terminalBlock as IMyAirVent;
             if (vent != null)
             {
                 producers.Add(new ManagedProducer(vent));
-                return;
             }
 
             var farm = terminalBlock as IMyOxygenFarm;
             if (farm != null)
             {
                 producers.Add(new ManagedProducer(farm));
-                return;
             }
 
-            try
+            var tank = terminalBlock as IMyGasTank;
+            if (tank != null && (tank.BlockDefinition.SubtypeName.Contains("Oxygen") || tank.BlockDefinition.SubtypeName == ""))
             {
-                var tank = terminalBlock as IMyGasTank;
-                if (tank != null && tank.BlockDefinition.SubtypeName.Contains("Oxygen") || tank.BlockDefinition.SubtypeName == "")
-                {
-                    o2Storage.Add(new ManagedStorage(tank));
-                    return;
-                }
-            }
-            catch (System.Exception e)
-            {
-                MyAPIGateway.Utilities.ShowMessage("O2Link", $"Error adding gas tank: {e.Message}");
+                o2Storage.Add(new ManagedStorage(tank));
             }
 
             var thruster = terminalBlock as IMyThrust;
             if (thruster != null && thruster.BlockDefinition.SubtypeName.Contains("HydrogenThrust"))
             {
                 consumers.Add(new ManagedConsumer(thruster));
-                return;
             }
 
             var engine = terminalBlock as IMyPowerProducer;
             if (engine != null && engine.BlockDefinition.SubtypeName.Contains("HydrogenEngine"))
             {
                 consumers.Add(new ManagedConsumer(engine));
-                return;
             }
+            
+            MyAPIGateway.Utilities.ShowMessage("O2Link", $"Block added: {terminalBlock?.CustomName ?? block.DisplayNameText}, Consumers: {consumers.Count}");
         }
 
         public void RemoveBlock(IMyCubeBlock block)
@@ -225,6 +215,11 @@ namespace TSUT.O2Link
 
             if (terminalBlock is IMyThrust || terminalBlock is IMyPowerProducer)
             {
+                var consumersToRemove = consumers.Where(c => c.Block == terminalBlock).ToList();
+                foreach (var consumer in consumersToRemove)
+                {
+                    consumer.Dismiss();
+                }
                 consumers.RemoveAll(c => c.Block == terminalBlock);
                 return;
             }
@@ -234,6 +229,7 @@ namespace TSUT.O2Link
             {
                 _referenceBlock = GetAnyRemainingBlock();
             }
+            MyAPIGateway.Utilities.ShowMessage("O2Link", $"Block removed: {terminalBlock?.CustomName ?? block.DisplayNameText}, Consumers: {consumers.Count}");
         }
 
         private IMyTerminalBlock GetAnyRemainingBlock()
